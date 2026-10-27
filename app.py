@@ -68,80 +68,6 @@ MODEL_DIR = os.path.dirname(os.path.abspath(__file__))
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # ─── Model Definitions ───
-class SimpleCNN(nn.Module):
-    def __init__(self, num_classes=7):
-        super().__init__()
-        self.features = nn.Sequential(
-            nn.Conv2d(1, 32, 3, padding=1), nn.BatchNorm2d(32), nn.ReLU(),
-            nn.Conv2d(32, 32, 3, padding=1), nn.BatchNorm2d(32), nn.ReLU(),
-            nn.MaxPool2d(2), nn.Dropout2d(0.25),
-            nn.Conv2d(32, 64, 3, padding=1), nn.BatchNorm2d(64), nn.ReLU(),
-            nn.Conv2d(64, 64, 3, padding=1), nn.BatchNorm2d(64), nn.ReLU(),
-            nn.MaxPool2d(2), nn.Dropout2d(0.25),
-            nn.Conv2d(64, 128, 3, padding=1), nn.BatchNorm2d(128), nn.ReLU(),
-            nn.Conv2d(128, 128, 3, padding=1), nn.BatchNorm2d(128), nn.ReLU(),
-            nn.MaxPool2d(2), nn.Dropout2d(0.25),
-        )
-        self.classifier = nn.Sequential(
-            nn.Flatten(),
-            nn.Linear(128 * 6 * 6, 512),
-            nn.ReLU(),
-            nn.Dropout(0.5),
-            nn.Linear(512, 256),
-            nn.ReLU(),
-            nn.Dropout(0.3),
-            nn.Linear(256, num_classes)
-        )
-
-    def forward(self, x):
-        return self.classifier(self.features(x))
-
-class ResBlock(nn.Module):
-    def __init__(self, ch):
-        super().__init__()
-        self.net = nn.Sequential(
-            nn.Conv2d(ch, ch, 3, padding=1, bias=False),
-            nn.BatchNorm2d(ch),
-            nn.ReLU(),
-            nn.Conv2d(ch, ch, 3, padding=1, bias=False),
-            nn.BatchNorm2d(ch)
-        )
-
-    def forward(self, x):
-        return F.relu(self.net(x) + x)
-
-class DeepCNN(nn.Module):
-    def __init__(self, num_classes=7):
-        super().__init__()
-        self.stem = nn.Sequential(
-            nn.Conv2d(1, 64, 3, padding=1, bias=False),
-            nn.BatchNorm2d(64),
-            nn.ReLU(),
-            nn.MaxPool2d(2)
-        )
-        self.layer1 = nn.Sequential(
-            ResBlock(64), ResBlock(64), nn.MaxPool2d(2), nn.Dropout2d(0.2)
-        )
-        self.layer2 = nn.Sequential(
-            nn.Conv2d(64, 128, 1, bias=False),
-            nn.BatchNorm2d(128),
-            ResBlock(128),
-            ResBlock(128),
-            nn.MaxPool2d(2),
-            nn.Dropout2d(0.2)
-        )
-        self.head = nn.Sequential(
-            nn.AdaptiveAvgPool2d(1),
-            nn.Flatten(),
-            nn.Linear(128, 256),
-            nn.ReLU(),
-            nn.Dropout(0.4),
-            nn.Linear(256, num_classes)
-        )
-
-    def forward(self, x):
-        return self.head(self.layer2(self.layer1(self.stem(x))))
-
 def build_resnet50(num_classes=7):
     model = models.resnet50(weights=None)
     model.fc = nn.Sequential(
@@ -168,15 +94,11 @@ def build_vit(num_classes=7):
 
 MODEL_FILES = {
     "ResNet50": "rafdb_model_resnet50.pth",
-    "DeepCNN": "rafdb_model_deepcnn.pth",
     "EfficientNetB3": "rafdb_model_efficientnetb3.pth",
-    "ViT-Small": "rafdb_model_vit-small.pth",
-    "SimpleCNN": "rafdb_model_simplecnn.pth"
+    "ViT-Small": "rafdb_model_vit-small.pth"
 }
 
 MODEL_BUILDERS = {
-    "SimpleCNN": lambda: SimpleCNN(7),
-    "DeepCNN": lambda: DeepCNN(7),
     "ResNet50": lambda: build_resnet50(7),
     "EfficientNetB3": lambda: build_efficientnet(7),
     "ViT-Small": lambda: build_vit(7)
@@ -196,24 +118,15 @@ def load_model(name):
 def load_face_detector():
     return cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
 
-small_tf = transforms.Compose([
-    transforms.Grayscale(1),
-    transforms.Resize((48, 48)),
-    transforms.ToTensor(),
-    transforms.Normalize([0.5], [0.5])
-])
-
-large_tf = transforms.Compose([
+img_transform = transforms.Compose([
     transforms.Resize((224, 224)),
     transforms.ToTensor(),
     transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
 ])
 
-def preprocess_face(face_img, model_name):
+def preprocess_face(face_img, model_name=None):
     pil = Image.fromarray(cv2.cvtColor(face_img, cv2.COLOR_BGR2RGB))
-    if model_name in ["SimpleCNN", "DeepCNN"]:
-        return small_tf(pil).unsqueeze(0).to(DEVICE)
-    return large_tf(pil).unsqueeze(0).to(DEVICE)
+    return img_transform(pil).unsqueeze(0).to(DEVICE)
 
 @torch.no_grad()
 def predict(model, tensor):

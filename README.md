@@ -5,8 +5,6 @@ A real-time facial emotion recognition application built with Streamlit, OpenCV,
 ## 🚀 Features
 - **Live Camera Feed:** Real-time detection and classification of facial emotions.
 - **Multiple Model Architectures:**
-  - Simple CNN
-  - Deep CNN (with Residual Blocks)
   - ResNet50
   - EfficientNetB3
   - Vision Transformer (ViT-Small)
@@ -42,7 +40,7 @@ The models were trained on the **RAF-DB (Real-world Affective Faces Database)**,
 7. Neutral
 
 ## 🧠 Models
-The project includes a variety of models, from simple custom CNNs to state-of-the-art architectures like Vision Transformers and EfficientNet.
+The project includes state-of-the-art architectures like ResNet50, EfficientNet, and Vision Transformers (ViT).
 
 ## 📜 License
 This project is for educational purposes.
