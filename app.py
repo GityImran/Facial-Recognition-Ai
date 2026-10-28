@@ -134,416 +134,328 @@ def predict(model, tensor):
     idx = int(np.argmax(probs))
     return CLASSES[idx], probs[idx], probs
 
-# ─── Minimalist CSS ───
+def to_hex(rgb):
+    return f"#{rgb[0]:02x}{rgb[1]:02x}{rgb[2]:02x}"
+
+def analyze_faces(bgr_img, faces):
+    """Runs inference on every detected face and returns per-face results."""
+    results = []
+    for (x, y, w, h) in faces:
+        y1, y2 = max(0, y - 20), min(bgr_img.shape[0], y + h + 20)
+        x1, x2 = max(0, x - 20), min(bgr_img.shape[1], x + w + 20)
+        crop = bgr_img[y1:y2, x1:x2]
+        if crop.size == 0:
+            continue
+        emotion, conf, probs = predict(emotion_model, preprocess_face(crop, model_name))
+        results.append({"box": (x, y, w, h), "emotion": emotion, "conf": conf, "probs": probs})
+    return results
+
+def draw_face_box(img, box, emotion, conf, bgr=True):
+    """Draws a rounded-corner bracket box with a filled label chip."""
+    x, y, w, h = box
+    rgb = COLOR_MAP.get(emotion, (148, 163, 184))
+    color = (rgb[2], rgb[1], rgb[0]) if bgr else rgb
+    # Translucent fill
+    overlay = img.copy()
+    cv2.rectangle(overlay, (x, y), (x + w, y + h), color, -1)
+    cv2.addWeighted(overlay, 0.08, img, 0.92, 0, img)
+    # Thin outline + thick corner brackets
+    cv2.rectangle(img, (x, y), (x + w, y + h), color, 1, cv2.LINE_AA)
+    k = max(12, w // 6)
+    for (cx, cy, dx, dy) in [(x, y, 1, 1), (x + w, y, -1, 1), (x, y + h, 1, -1), (x + w, y + h, -1, -1)]:
+        cv2.line(img, (cx, cy), (cx + dx * k, cy), color, 3, cv2.LINE_AA)
+        cv2.line(img, (cx, cy), (cx, cy + dy * k), color, 3, cv2.LINE_AA)
+    # Label chip
+    label = f"{emotion}  {conf:.0%}"
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    (tw, th), _ = cv2.getTextSize(label, font, 0.55, 1)
+    top = max(0, y - th - 16)
+    cv2.rectangle(img, (x, top), (x + tw + 16, y - 4), color, -1)
+    cv2.putText(img, label, (x + 8, y - 10), font, 0.55, (12, 14, 20), 1, cv2.LINE_AA)
+    return img
+
+# ─── Styles ───
 st.markdown(clean_html("""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
-
-html, body, [class*="css"] {
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-    color: #cbd5e1;
+@import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,800&family=Figtree:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap');
+:root {
+    --bg: #ECEEF2;
+    --panel: #FFFFFF;
+    --ink: #14161B;
+    --muted: #6A7180;
+    --line: #DCE0E7;
+    --cobalt: #2433D6;
+    --display: 'Bricolage Grotesque', sans-serif;
+    --mono: 'IBM Plex Mono', monospace;
 }
-
-.stApp {
-    background-color: #090b10;
+html, body, [class*="css"], .stApp, p, label, button, input {
+    font-family: 'Figtree', -apple-system, sans-serif;
+    color: var(--ink);
 }
-
-.block-container {
-    padding-top: 2rem !important;
-    padding-bottom: 3rem !important;
-    max-width: 1140px !important;
+.stApp { background: var(--bg); }
+#MainMenu, footer, header[data-testid="stHeader"], [data-testid="stToolbar"],
+[data-testid="stDecoration"], [data-testid="stSidebar"], [data-testid="stSidebarCollapsedControl"] { display: none !important; }
+.block-container { padding: 0 1.5rem 4rem 1.5rem !important; max-width: 1200px !important; }
+@keyframes settle { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+@keyframes sweep { from { clip-path: inset(0 100% 0 0); } to { clip-path: inset(0 0 0 0); } }
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+:focus-visible { outline: 2px solid var(--cobalt) !important; outline-offset: 2px; }
+/* Top bar */
+.st-key-topbar { border-bottom: 1px solid var(--line); padding: 14px 0; }
+.st-key-topbar [data-testid="stColumn"]:last-child { display: flex; justify-content: flex-end; }
+.topbar { display: flex; align-items: center; gap: 14px; }
+.st-key-topbar [data-testid="stHorizontalBlock"] { align-items: center !important; gap: 8px !important; }
+.st-key-topbar [data-testid="stColumn"] { display: flex; align-items: center; min-height: 32px; }
+.st-key-topbar [data-testid="stColumn"] > div, .st-key-topbar [data-testid="stVerticalBlock"] { gap: 0 !important; width: 100%; }
+.st-key-topbar [data-testid="stElementContainer"], .st-key-topbar [data-testid="stMarkdown"],
+.st-key-topbar [data-testid="stMarkdownContainer"], .st-key-topbar [data-testid="stPopover"] { margin: 0 !important; padding: 0 !important; }
+.st-key-topbar [data-testid="stMarkdownContainer"] > div { margin: 0 !important; }
+.st-key-topbar [data-testid="stColumn"]:last-child [data-testid="stVerticalBlock"] { align-items: flex-end; }
+.wordmark { font-family: var(--display); font-weight: 800; font-size: 26px; letter-spacing: -0.04em; line-height: 1; }
+.wordmark span { color: var(--cobalt); }
+.tagline { font-size: 13px; color: var(--muted); padding-left: 14px; border-left: 1px solid var(--line); }
+.status {
+    margin-left: auto; display: inline-flex; align-items: center; gap: 8px;
+    font-family: var(--mono); font-size: 11.5px; color: var(--muted);
+    background: var(--panel); border: 1px solid var(--line); border-radius: 999px; height: 32px; padding: 0 12px; box-sizing: border-box;
 }
-
-header[data-testid="stHeader"] {
-    background-color: transparent !important;
+.status i { width: 7px; height: 7px; border-radius: 50%; background: #16A34A; display: inline-block; }
+.status.off i { background: #DC2626; }
+/* Page intro */
+.intro { padding: 2.6rem 0 1.8rem 0; }
+.intro h1 {
+    font-family: var(--display); font-weight: 600; font-size: clamp(1.9rem, 3.6vw, 2.7rem);
+    letter-spacing: -0.035em; line-height: 1.05; margin: 0; color: var(--ink);
 }
-
-[data-testid="stSidebar"] {
-    background-color: #0e1118 !important;
-    border-right: 1px solid rgba(255, 255, 255, 0.06);
+.intro p { color: var(--muted); font-size: 16px; line-height: 1.5; margin: 12px 0 0 0; max-width: 480px; }
+/* Settings popover button */
+.st-key-topbar [data-testid="stPopover"] { width: auto !important; }
+.st-key-topbar [data-testid="stPopover"] button {
+    background: var(--panel) !important; border: 1px solid var(--line) !important;
+    border-radius: 999px !important; color: var(--ink) !important;
+    min-height: 0 !important; height: 32px; padding: 0 12px !important; width: auto !important;
 }
-
-[data-testid="stSidebar"] h3 {
-    font-size: 1.1rem;
-    font-weight: 600;
-    color: #f1f5f9;
-    letter-spacing: -0.01em;
-    margin-bottom: 0.8rem;
+.st-key-topbar [data-testid="stPopover"] button p { font-size: 13px; font-weight: 500; }
+.st-key-topbar [data-testid="stPopover"] button:hover { border-color: #C3C9D4 !important; }
+/* Source switcher */
+[data-testid="stButtonGroup"] > div {
+    background: #E1E4EA; padding: 4px; border-radius: 12px; gap: 2px !important; width: fit-content;
 }
-
-/* Header Container */
-.brand-container {
-    padding: 0 0 1.25rem 0;
-    margin-bottom: 1rem;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+[data-testid="stButtonGroup"] button {
+    border: none !important; background: transparent !important; border-radius: 9px !important;
+    padding: 6px 18px !important; min-height: 36px; color: var(--muted) !important; box-shadow: none !important;
 }
-
-.brand-badge {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 11px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    color: #818cf8;
-    background: rgba(99, 102, 241, 0.1);
-    border: 1px solid rgba(99, 102, 241, 0.2);
-    padding: 3px 8px;
-    border-radius: 4px;
-    margin-bottom: 8px;
+[data-testid="stButtonGroup"] button p { font-size: 14px; font-weight: 500; }
+[data-testid="stButtonGroup"] button:hover { color: var(--ink) !important; }
+[data-testid="stButtonGroup"] button[kind$="Active"] {
+    background: var(--panel) !important; color: var(--ink) !important;
+    box-shadow: 0 1px 3px rgba(20,22,27,.10), 0 0 0 1px rgba(20,22,27,.05) !important;
 }
-
-.brand-title {
-    font-size: 1.65rem;
-    font-weight: 700;
-    letter-spacing: -0.025em;
-    color: #f8fafc;
-    margin: 0;
-}
-
-.brand-subtitle {
-    font-size: 0.85rem;
-    color: #64748b;
-    margin-top: 4px;
-    margin-bottom: 0;
-}
-
-/* Tabs */
+.source-hint { font-size: 13.5px; color: var(--muted); text-align: right; }
+@media (max-width: 640px) { .source-hint { text-align: left; } }
+/* Tabs as a segmented control */
 .stTabs [data-baseweb="tab-list"] {
-    gap: 6px;
-    background-color: #11141d;
-    padding: 4px;
-    border-radius: 8px;
-    border: 1px solid rgba(255, 255, 255, 0.06);
-    margin-bottom: 1.25rem;
+    gap: 2px; background: #E1E4EA; padding: 3px; border-radius: 10px; width: fit-content; margin-bottom: 1.2rem;
 }
-
 .stTabs [data-baseweb="tab"] {
-    height: 36px;
-    border-radius: 6px;
-    padding: 0 16px;
-    color: #94a3b8;
-    font-weight: 500;
-    font-size: 13.5px;
-    border: none !important;
-    background-color: transparent;
+    height: 34px; border-radius: 8px; padding: 0 18px; color: var(--muted);
+    font-weight: 500; font-size: 13.5px; background: transparent; border: none !important;
 }
-
 .stTabs [aria-selected="true"] {
-    background-color: #1e2433 !important;
-    color: #f8fafc !important;
+    background: var(--panel) !important; color: var(--ink) !important;
+    box-shadow: 0 1px 2px rgba(20,22,27,.08), 0 0 0 1px rgba(20,22,27,.04);
 }
-
-.stTabs [data-baseweb="tab-border"],
-.stTabs [data-baseweb="tab-highlight"] {
-    display: none;
+.stTabs [data-baseweb="tab-border"], .stTabs [data-baseweb="tab-highlight"] { display: none; }
+div[role="radiogroup"] { gap: 18px !important; margin-bottom: .6rem; }
+div[role="radiogroup"] label p { font-size: 13.5px; }
+/* Media frames */
+[data-testid="stImage"] img, [data-testid="stCameraInput"], video {
+    border-radius: 14px !important; overflow: hidden; background: var(--panel);
+    box-shadow: 0 0 0 1px var(--line);
 }
-
-/* Prediction Result Card */
-.result-card {
-    background: #11141d;
-    border: 1px solid rgba(255, 255, 255, 0.07);
-    border-radius: 12px;
-    padding: 1.25rem;
+[data-testid="stFileUploaderDropzone"] {
+    background: var(--panel) !important; border: 1.5px dashed #C3C9D4 !important;
+    border-radius: 14px !important; padding: 1.6rem !important;
 }
-
-.dominant-hero {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding-bottom: 0.85rem;
-    margin-bottom: 0.85rem;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+[data-testid="stFileUploaderDropzone"]:hover { border-color: var(--cobalt) !important; }
+/* Reading panel — the instrument */
+.reading {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 18px;
+    padding: 22px 24px 20px 24px; animation: settle .3s ease-out both;
 }
-
-.dominant-left {
-    display: flex;
-    align-items: center;
-    gap: 12px;
+.reading-head {
+    display: flex; justify-content: space-between; align-items: center;
+    font-family: var(--mono); font-size: 11px; color: var(--muted); letter-spacing: .04em;
 }
-
-.dominant-emoji {
-    font-size: 2rem;
-    line-height: 1;
+.reading-word {
+    font-family: var(--display); font-weight: 800; font-size: clamp(3rem, 6vw, 4.6rem);
+    letter-spacing: -0.05em; line-height: .95; margin: 18px 0 6px 0;
 }
-
-.dominant-name {
-    font-size: 1.25rem;
-    font-weight: 600;
-    color: #f8fafc;
-    letter-spacing: -0.02em;
+.reading-conf { font-family: var(--mono); font-size: 13px; color: var(--muted); }
+.reading-conf b { color: var(--ink); font-weight: 500; }
+.spectrum {
+    display: flex; height: 14px; border-radius: 4px; overflow: hidden; gap: 2px;
+    margin: 22px 0 8px 0; animation: sweep .7s cubic-bezier(.2,.8,.2,1) both;
 }
-
-.dominant-pill {
-    font-size: 12px;
-    font-weight: 600;
-    padding: 4px 10px;
-    border-radius: 6px;
-    background: rgba(255, 255, 255, 0.06);
-    color: #e2e8f0;
-    font-variant-numeric: tabular-nums;
+.spectrum div { min-width: 2px; }
+.spectrum-scale { display: flex; justify-content: space-between; font-family: var(--mono); font-size: 10px; color: #A2A8B4; }
+.legend { margin-top: 18px; border-top: 1px solid var(--line); }
+.legend-row {
+    display: grid; grid-template-columns: 10px 1fr auto; align-items: center; gap: 10px;
+    padding: 8px 0; border-bottom: 1px solid #EEF0F3; font-size: 13.5px; color: var(--muted);
 }
-
-/* Probabilities */
-.prob-list {
-    display: flex;
-    flex-direction: column;
-    gap: 9px;
-}
-
-.prob-row {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-}
-
-.prob-name {
-    width: 80px;
-    font-size: 12.5px;
-    font-weight: 500;
-    color: #94a3b8;
-    white-space: nowrap;
-}
-
-.prob-track {
-    flex: 1;
-    height: 5px;
-    background: rgba(255, 255, 255, 0.05);
-    border-radius: 999px;
-    overflow: hidden;
-}
-
-.prob-fill {
-    height: 100%;
-    border-radius: 999px;
-    transition: width 0.3s ease-out;
-}
-
-.prob-pct {
-    width: 44px;
-    text-align: right;
-    font-size: 12px;
-    color: #64748b;
-    font-variant-numeric: tabular-nums;
-}
-
-.prob-row.active .prob-name,
-.prob-row.active .prob-pct {
-    color: #f1f5f9;
-    font-weight: 600;
-}
-
-/* Empty State Card */
+.legend-row:last-child { border-bottom: none; }
+.legend-row i { width: 10px; height: 10px; border-radius: 3px; display: block; }
+.legend-row span:last-child { font-family: var(--mono); font-size: 12px; }
+.legend-row.top { color: var(--ink); font-weight: 600; }
+.legend-row.top span:last-child { color: var(--ink); }
+/* Empty / guidance state */
 .empty-card {
-    background: #11141d;
-    border: 1px dashed rgba(255, 255, 255, 0.08);
-    border-radius: 12px;
-    padding: 2.25rem 1.5rem;
-    text-align: center;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 18px;
+    padding: 2.4rem 1.6rem; text-align: center; animation: settle .3s ease-out both;
 }
-
-.empty-title {
-    font-size: 0.95rem;
-    font-weight: 500;
-    color: #94a3b8;
-    margin-bottom: 4px;
+.empty-icon {
+    width: 46px; height: 46px; margin: 0 auto 14px auto; display: grid; place-items: center;
+    font-size: 20px; border-radius: 12px; background: #F2F4F8; border: 1px solid var(--line);
 }
-
-.empty-caption {
-    font-size: 0.8rem;
-    color: #64748b;
-    margin: 0;
+.empty-title { font-family: var(--display); font-weight: 600; font-size: 1.15rem; letter-spacing: -0.02em; margin-bottom: 6px; }
+.empty-caption { font-size: 14px; color: var(--muted); margin: 0 auto; line-height: 1.5; max-width: 340px; }
+.empty-caption code { background: #F2F4F8; padding: 1px 6px; border-radius: 5px; font-family: var(--mono); font-size: 12px; }
+/* Box colour key */
+.key-card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 16px 18px; margin-top: 12px; }
+.key-title { font-family: var(--display); font-weight: 600; font-size: 15px; letter-spacing: -0.01em; }
+.key-sub { font-size: 12.5px; color: var(--muted); margin: 2px 0 12px 0; line-height: 1.45; }
+.key-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 16px; }
+.key-item { display: flex; align-items: center; gap: 10px; font-size: 13.5px; }
+.key-item i {
+    width: 14px; height: 14px; flex-shrink: 0; border: 2.5px solid; border-radius: 3px;
 }
-
-/* Reference Category Pills */
-.category-list {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-    margin-top: 10px;
-}
-
+/* Box colour key end */
+/* Info panel + class chips */
+.section-label { font-family: var(--mono); font-size: 11px; color: var(--muted); margin: 1.2rem 0 .6rem 0; }
+.category-list { display: flex; flex-wrap: wrap; gap: 6px; }
 .category-pill {
-    display: inline-flex;
-    align-items: center;
-    gap: 7px;
-    padding: 6px 12px;
-    background: #11141d;
-    border: 1px solid rgba(255, 255, 255, 0.06);
-    border-radius: 20px;
-    font-size: 12px;
-    color: #94a3b8;
+    display: inline-flex; align-items: center; gap: 7px; padding: 5px 11px 5px 9px;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 8px; font-size: 12.5px;
 }
-
-.category-dot {
-    width: 7px;
-    height: 7px;
-    border-radius: 50%;
-    flex-shrink: 0;
-}
-
-/* Info card */
-.panel-card {
-    background: #11141d;
-    border: 1px solid rgba(255, 255, 255, 0.06);
-    border-radius: 10px;
-    padding: 14px 16px;
-    margin-bottom: 12px;
-}
-
+.category-dot { width: 8px; height: 8px; border-radius: 2px; flex-shrink: 0; }
+.panel-card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 4px 16px; }
 .panel-row {
-    display: flex;
-    justify-content: space-between;
-    font-size: 12.5px;
-    padding: 4px 0;
-    color: #94a3b8;
+    display: flex; justify-content: space-between; font-size: 13px; padding: 10px 0;
+    color: var(--muted); border-bottom: 1px solid #EEF0F3;
 }
-
-.panel-row span:last-child {
-    color: #e2e8f0;
-    font-weight: 500;
-}
+.panel-row:last-child { border-bottom: none; }
+.panel-row span:last-child { color: var(--ink); font-family: var(--mono); font-size: 12px; }
+@media (max-width: 640px) { .tagline { display: none; } .block-container { padding: 0 1rem 3rem 1rem !important; } }
 </style>
 """), unsafe_allow_html=True)
 
-# ─── Sidebar ───
-with st.sidebar:
-    st.markdown("### Settings")
-    model_name = st.selectbox(
-        "Model",
-        list(MODEL_FILES.keys()),
-        index=0,  # Default to ResNet50
-        help="Select the deep learning model architecture used for inference."
-    )
-    st.caption("ResNet50 delivers highest classification precision.")
-
-    st.markdown("<div style='height: 14px;'></div>", unsafe_allow_html=True)
-    st.markdown("##### Detector Parameters")
-    face_scale = st.slider("Scale Factor", 1.05, 1.5, 1.3, step=0.05, help="Image pyramid scale for face bounding box detection.")
-    min_neighbors = st.slider("Min Neighbors", 1, 10, 5, step=1, help="Higher values reduce false positive detections.")
-
-    st.markdown("<div style='height: 14px;'></div>", unsafe_allow_html=True)
-    with st.expander("System & Help", expanded=False):
-        st.markdown(f"**Hardware**: `{DEVICE.type.upper()}`")
-        st.markdown(f"**Model Weights**: `{MODEL_FILES[model_name]}`")
-        st.markdown("---")
-        st.markdown("""
-        - **Lighting**: Maintain even front-facing lighting.
-        - **Alignment**: Face directly towards the camera lens.
-        - **Sensitivity**: If no face is detected, reduce *Scale Factor* or *Min Neighbors*.
-        """)
-
-def render_emotion_stats(emotion, conf, probs, container=None):
-    dominant_color = COLOR_MAP.get(emotion, (148, 163, 184))
-    dom_hex = f"#{dominant_color[0]:02x}{dominant_color[1]:02x}{dominant_color[2]:02x}"
-
-    rows_html = []
-    for i, cls in enumerate(CLASSES):
-        p = probs[i]
-        c = COLOR_MAP.get(cls, (148, 163, 184))
-        hex_c = f"#{c[0]:02x}{c[1]:02x}{c[2]:02x}"
-        is_active = (cls == emotion)
-        active_class = "active" if is_active else ""
-        bar_opacity = "1" if is_active else "0.45"
-
-        rows_html.append(
-            f'<div class="prob-row {active_class}">'
-            f'<span class="prob-name">{cls}</span>'
-            f'<div class="prob-track"><div class="prob-fill" style="width: {p*100:.1f}%; background-color: {hex_c}; opacity: {bar_opacity};"></div></div>'
-            f'<span class="prob-pct">{p:.1%}</span>'
-            f'</div>'
-        )
-
-    rows_joined = "".join(rows_html)
-
+def empty_state(icon, title, caption, container=None):
     html = (
-        f'<div class="result-card">'
-        f'<div class="dominant-hero">'
-        f'<div class="dominant-left">'
-        f'<span class="dominant-emoji">{EMOJI_MAP.get(emotion, "😐")}</span>'
-        f'<span class="dominant-name">{emotion}</span>'
-        f'</div>'
-        f'<span class="dominant-pill" style="border-left: 3px solid {dom_hex};">{conf:.1%} Match</span>'
-        f'</div>'
-        f'<div class="prob-list">{rows_joined}</div>'
-        f'</div>'
+        f'<div class="empty-card"><div class="empty-icon">{icon}</div>'
+        f'<div class="empty-title">{title}</div><p class="empty-caption">{caption}</p></div>'
     )
-    if container:
-        container.markdown(html, unsafe_allow_html=True)
-    else:
-        st.markdown(html, unsafe_allow_html=True)
+    (container or st).markdown(html, unsafe_allow_html=True)
+
+# ─── Top bar ───
+topbar = st.container(key="topbar")
+bar_left, bar_right = topbar.columns([8, 1], vertical_alignment="center", gap="small")
+with bar_right:
+    with st.popover("Settings", icon=":material/tune:"):
+        model_name = st.selectbox(
+            "Model",
+            list(MODEL_FILES.keys()),
+            index=0,  # Default to ResNet50
+            help="ResNet50 is the most accurate. ViT-Small is the lightest."
+        )
+        face_scale = st.slider("Detection scale", 1.05, 1.5, 1.3, step=0.05, help="Lower finds smaller or farther faces, but runs slower.")
+        min_neighbors = st.slider("Detection strictness", 1, 10, 5, step=1, help="Higher ignores more false matches, but may miss real faces.")
+        st.caption("No face found? Lower the scale or strictness. Face the camera in even light.")
 
 face_detector = load_face_detector()
 emotion_model = load_model(model_name)
 
-# ─── Header ───
+with bar_left:
+    status_cls = "" if emotion_model is not None else " off"
+    status_txt = f"{model_name} · {DEVICE.type.upper()}" if emotion_model is not None else f"{model_name} weights missing"
+    st.markdown(
+        f'<div class="topbar"><div class="wordmark">mien<span>.</span></div>'
+        f'<div class="tagline">Expression reading</div>'
+        f'<div class="status{status_cls}"><i></i>{status_txt}</div></div>',
+        unsafe_allow_html=True
+    )
+
+def render_emotion_stats(emotion, conf, probs, container=None, n_faces=1):
+    dom_hex = to_hex(COLOR_MAP.get(emotion, (148, 163, 184)))
+    order = np.argsort(probs)[::-1]
+
+    bands = "".join(
+        f'<div title="{CLASSES[i]} {probs[i]:.1%}" style="flex: {max(probs[i], 0.004):.4f}; background: {to_hex(COLOR_MAP[CLASSES[i]])};"></div>'
+        for i in order
+    )
+    rows = "".join(
+        f'<div class="legend-row{" top" if CLASSES[i] == emotion else ""}">'
+        f'<i style="background: {to_hex(COLOR_MAP[CLASSES[i]])};"></i>'
+        f'<span>{CLASSES[i]}</span><span>{probs[i]:.1%}</span></div>'
+        for i in order
+    )
+    faces_txt = f"{n_faces} face{'s' if n_faces != 1 else ''} · strongest shown"
+    html = (
+        f'<div class="reading">'
+        f'<div class="reading-head"><span>Reading</span><span>{faces_txt}</span></div>'
+        f'<div class="reading-word" style="text-decoration: underline; text-decoration-color: {dom_hex}; text-decoration-thickness: 7px; text-underline-offset: 10px;">{emotion}</div>'
+        f'<div class="reading-conf"><b>{conf:.0%}</b> confidence</div>'
+        f'<div class="spectrum">{bands}</div>'
+        f'<div class="spectrum-scale"><span>0</span><span>Expression spectrum</span><span>100%</span></div>'
+        f'<div class="legend">{rows}</div>'
+        f'</div>'
+    )
+    (container or st).markdown(html, unsafe_allow_html=True)
+
+def render_top_result(results, container=None):
+    top = max(results, key=lambda r: r["conf"])
+    render_emotion_stats(top["emotion"], top["conf"], top["probs"], container, n_faces=len(results))
+
 st.markdown(clean_html("""
-<div class="brand-container">
-    <div class="brand-badge">✦ Emotion AI</div>
-    <h1 class="brand-title">Facial Emotion Recognition</h1>
-    <p class="brand-subtitle">Real-time facial expression classification powered by PyTorch</p>
+<div class="intro">
+    <h1>See what a face is saying.</h1>
+    <p>Point a camera or drop in a photo. Mien finds each face and reads its expression across seven emotions.</p>
 </div>
 """), unsafe_allow_html=True)
 
-tab_live, tab_upload = st.tabs(["Camera Feed", "Image Upload"])
+SOURCE_HINTS = {
+    "Live": "Streams from this browser's camera and reads every frame.",
+    "Snapshot": "Takes one photo with this browser's camera.",
+    "Upload": "Reads a JPG or PNG from your files.",
+    "Local webcam": "Uses the camera attached to the machine running Mien.",
+}
+src_col, hint_col = st.columns([1.15, 1], vertical_alignment="center")
+with src_col:
+    cam_mode = st.segmented_control(
+        "Source", list(SOURCE_HINTS), default="Live", label_visibility="collapsed"
+    ) or "Live"
+with hint_col:
+    st.markdown(f'<div class="source-hint">{SOURCE_HINTS[cam_mode]}</div>', unsafe_allow_html=True)
 
-with tab_live:
-    cam_mode = st.radio(
-        "Camera Mode",
-        ["Live Stream (WebRTC)", "Browser Snapshot", "Host Webcam"],
-        horizontal=True,
-        label_visibility="collapsed"
-    )
-
-    if cam_mode == "Live Stream (WebRTC)":
+if cam_mode != "Upload":
+    if cam_mode == "Live":
         if not WEBRTC_AVAILABLE:
-            st.markdown(clean_html("""
-            <div class="empty-card" style="text-align: left; padding: 1.5rem;">
-                <div class="empty-title" style="color: #f1f5f9;">Live Stream requires streamlit-webrtc</div>
-                <p class="empty-caption" style="margin-top: 6px;">
-                    Select <strong>Browser Snapshot</strong> above to capture frames using your camera immediately without additional libraries,
-                    or run <code>pip install streamlit-webrtc av</code> to enable real-time continuous WebRTC streaming.
-                </p>
-            </div>
-            """), unsafe_allow_html=True)
+            empty_state(
+                "📡", "Live mode needs streamlit-webrtc",
+                "Use <strong>Snapshot</strong> instead, "
+                "or run <code>pip install streamlit-webrtc av</code> for continuous streaming."
+            )
         else:
-            col_cam, col_info = st.columns([1.6, 1])
+            col_cam, col_info = st.columns([1.6, 1], gap="large")
             with col_cam:
-                st.caption("Press Start below to begin real-time emotion detection stream.")
+                st.caption("Press Start to read expressions continuously.")
 
                 def video_frame_callback(frame: av.VideoFrame) -> av.VideoFrame:
                     img = frame.to_ndarray(format="bgr24")
                     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
                     faces = face_detector.detectMultiScale(gray, face_scale, min_neighbors)
-                    dominant = None
-
-                    for (x, y, w, h) in faces:
-                        y1, y2 = max(0, y - 20), min(img.shape[0], y + h + 20)
-                        x1, x2 = max(0, x - 20), min(img.shape[1], x + w + 20)
-                        crop = img[y1:y2, x1:x2]
-                        if crop.size > 0:
-                            emotion, conf, probs = predict(emotion_model, preprocess_face(crop, model_name))
-                            if dominant is None or conf > dominant["conf"]:
-                                dominant = {"emotion": emotion, "conf": conf, "probs": probs}
-
-                            color = COLOR_MAP.get(emotion, (148, 163, 184))
-                            cv2.rectangle(img, (x, y), (x + w, y + h), color, 2)
-
-                            label = f"{emotion} {conf:.0%}"
-                            font = cv2.FONT_HERSHEY_SIMPLEX
-                            (tw, th), _ = cv2.getTextSize(label, font, 0.6, 1)
-                            cv2.rectangle(img, (x, max(0, y - th - 10)), (x + tw + 10, y), (17, 20, 29), -1)
-                            cv2.rectangle(img, (x, max(0, y - th - 10)), (x + tw + 10, y), color, 1)
-                            cv2.putText(img, label, (x + 5, max(th + 2, y - 4)), font, 0.6, (240, 245, 255), 1, cv2.LINE_AA)
-
-                    if dominant:
-                        hud_text = f"{dominant['emotion']}  {dominant['conf']:.1%}"
-                        c = COLOR_MAP.get(dominant["emotion"], (148, 163, 184))
-                        cv2.rectangle(img, (16, 16), (250, 52), (17, 20, 29), -1)
-                        cv2.rectangle(img, (16, 16), (250, 52), c, 1)
-                        cv2.putText(img, hud_text, (26, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (240, 245, 255), 1, cv2.LINE_AA)
-
+                    for r in analyze_faces(img, faces):
+                        draw_face_box(img, r["box"], r["emotion"], r["conf"])
                     return av.VideoFrame.from_ndarray(img, format="bgr24")
 
                 webrtc_streamer(
@@ -558,159 +470,93 @@ with tab_live:
             with col_info:
                 st.markdown(clean_html(f"""
                 <div class="panel-card">
-                    <div class="panel-row"><span>Active Model</span><span>{model_name}</span></div>
-                    <div class="panel-row"><span>Hardware Device</span><span>{DEVICE.type.upper()}</span></div>
-                    <div class="panel-row"><span>Target Classes</span><span>7 Emotions</span></div>
+                    <div class="panel-row"><span>Model</span><span>{model_name}</span></div>
+                    <div class="panel-row"><span>Device</span><span>{DEVICE.type.upper()}</span></div>
+                    <div class="panel-row"><span>Weights</span><span>{MODEL_FILES[model_name]}</span></div>
+                    <div class="panel-row"><span>Classes</span><span>7</span></div>
                 </div>
                 """), unsafe_allow_html=True)
 
-                st.caption("Target Emotion Classes")
-                cat_pills = []
-                for cls in CLASSES:
-                    c = COLOR_MAP[cls]
-                    hex_c = f"#{c[0]:02x}{c[1]:02x}{c[2]:02x}"
-                    cat_pills.append(
-                        f'<div class="category-pill">'
-                        f'<div class="category-dot" style="background-color: {hex_c};"></div>'
-                        f'<span>{cls}</span>'
-                        f'</div>'
-                    )
-                cat_joined = "".join(cat_pills)
-                st.markdown(f'<div class="category-list">{cat_joined}</div>', unsafe_allow_html=True)
+                keys = "".join(
+                    f'<div class="key-item"><i style="border-color: {to_hex(COLOR_MAP[cls])};"></i>{cls}</div>'
+                    for cls in CLASSES
+                )
+                st.markdown(
+                    f'<div class="key-card"><div class="key-title">Box colours</div>'
+                    f'<p class="key-sub">Each face in the stream is framed in the colour of its expression.</p>'
+                    f'<div class="key-grid">{keys}</div></div>',
+                    unsafe_allow_html=True
+                )
 
-    elif cam_mode == "Browser Snapshot":
-        col_cam, col_res = st.columns([1.5, 1])
+    elif cam_mode == "Snapshot":
+        col_cam, col_res = st.columns([1.5, 1], gap="large")
         with col_cam:
             img_file = st.camera_input("Take photo", label_visibility="collapsed")
 
         with col_res:
             if img_file:
-                img = np.array(Image.open(img_file).convert("RGB"))
-                gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
-                faces = face_detector.detectMultiScale(gray, face_scale, min_neighbors)
-                if len(faces) > 0:
-                    results = []
-                    for (x, y, w, h) in faces:
-                        crop = img[max(0, y - 20):y + h + 20, max(0, x - 20):x + w + 20]
-                        emotion, conf, probs = predict(emotion_model, preprocess_face(cv2.cvtColor(crop, cv2.COLOR_RGB2BGR), model_name))
-                        results.append({"emotion": emotion, "conf": conf, "probs": probs})
-                    top_res = max(results, key=lambda x: x["conf"])
-                    render_emotion_stats(top_res["emotion"], top_res["conf"], top_res["probs"])
+                bgr = cv2.cvtColor(np.array(Image.open(img_file).convert("RGB")), cv2.COLOR_RGB2BGR)
+                faces = face_detector.detectMultiScale(cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY), face_scale, min_neighbors)
+                results = analyze_faces(bgr, faces)
+                if results:
+                    render_top_result(results)
                 else:
-                    st.markdown(clean_html("""
-                    <div class="empty-card">
-                        <div class="empty-title">No Face Detected</div>
-                        <p class="empty-caption">Position your face clearly in frame or adjust detector sensitivity in the sidebar.</p>
-                    </div>
-                    """), unsafe_allow_html=True)
+                    empty_state("🔍", "No face detected", "Position your face clearly in frame or lower detection strictness in Settings.")
             else:
-                st.markdown(clean_html("""
-                <div class="empty-card">
-                    <div class="empty-title">Awaiting Snapshot</div>
-                    <p class="empty-caption">Take a photo using the camera viewfinder on the left.</p>
-                </div>
-                """), unsafe_allow_html=True)
+                empty_state("📸", "Take a snapshot", "Use the camera on the left. The reading appears here.")
 
-    elif cam_mode == "Host Webcam":
-        col_cam, col_res = st.columns([1.5, 1])
+    elif cam_mode == "Local webcam":
+        col_cam, col_res = st.columns([1.5, 1], gap="large")
         with col_cam:
-            run = st.toggle("Start Camera Feed", value=False)
+            run = st.toggle("Start webcam", value=False)
             frame_holder = st.empty()
 
         with col_res:
             result_holder = st.empty()
             if not run:
-                result_holder.markdown(clean_html("""
-                <div class="empty-card">
-                    <div class="empty-title">Camera Inactive</div>
-                    <p class="empty-caption">Toggle 'Start Camera Feed' to begin continuous host webcam inference.</p>
-                </div>
-                """), unsafe_allow_html=True)
+                empty_state("🎥", "Webcam is off", "Turn on <strong>Start webcam</strong> to read expressions continuously.", result_holder)
 
         if run:
             cap = cv2.VideoCapture(0)
             if not cap.isOpened():
-                st.error("Could not access host camera device. Please ensure webcam is connected.")
+                st.error("Webcam not found. Connect a camera, or close other apps using it, then turn it on again.")
             else:
                 while run:
                     ret, frame = cap.read()
                     if not ret:
                         break
-                    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-                    faces = face_detector.detectMultiScale(gray, face_scale, min_neighbors)
-
-                    top_res = None
-                    for (x, y, w, h) in faces:
-                        crop = frame[max(0, y - 20):y + h + 20, max(0, x - 20):x + w + 20]
-                        if crop.size > 0:
-                            emotion, conf, probs = predict(emotion_model, preprocess_face(crop, model_name))
-                            top_res = {"emotion": emotion, "conf": conf, "probs": probs}
-                            color = COLOR_MAP.get(emotion, (148, 163, 184))
-                            cv2.rectangle(frame, (x, y), (x + w, y + h), color, 2)
-                            label = f"{emotion} {conf:.0%}"
-                            font = cv2.FONT_HERSHEY_SIMPLEX
-                            (tw, th), _ = cv2.getTextSize(label, font, 0.6, 1)
-                            cv2.rectangle(frame, (x, max(0, y - th - 10)), (x + tw + 10, y), (17, 20, 29), -1)
-                            cv2.rectangle(frame, (x, max(0, y - th - 10)), (x + tw + 10, y), color, 1)
-                            cv2.putText(frame, label, (x + 5, max(th + 2, y - 4)), font, 0.6, (240, 245, 255), 1, cv2.LINE_AA)
+                    faces = face_detector.detectMultiScale(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY), face_scale, min_neighbors)
+                    results = analyze_faces(frame, faces)
+                    for r in results:
+                        draw_face_box(frame, r["box"], r["emotion"], r["conf"])
 
                     frame_holder.image(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB), use_container_width=True)
-                    if top_res:
-                        render_emotion_stats(top_res["emotion"], top_res["conf"], top_res["probs"], result_holder)
+                    if results:
+                        render_top_result(results, result_holder)
                     else:
-                        result_holder.markdown(clean_html("""
-                        <div class="empty-card">
-                            <div class="empty-title">Scanning for Faces...</div>
-                            <p class="empty-caption">Position your face inside the camera view.</p>
-                        </div>
-                        """), unsafe_allow_html=True)
+                        empty_state("👀", "Scanning for faces…", "Position your face inside the camera view.", result_holder)
                     time.sleep(0.01)
                 cap.release()
 
-with tab_upload:
+if cam_mode == "Upload":
     f = st.file_uploader("Upload an image", type=["jpg", "png", "jpeg"], label_visibility="collapsed")
     if f:
-        img = np.array(Image.open(f).convert("RGB"))
-        gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
-        faces = face_detector.detectMultiScale(gray, face_scale, min_neighbors)
-        col_img, col_res = st.columns([1.5, 1])
+        bgr = cv2.cvtColor(np.array(Image.open(f).convert("RGB")), cv2.COLOR_RGB2BGR)
+        faces = face_detector.detectMultiScale(cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY), face_scale, min_neighbors)
+        results = analyze_faces(bgr, faces)
+        col_img, col_res = st.columns([1.5, 1], gap="large")
 
         with col_img:
-            annotated = img.copy()
-            for (x, y, w, h) in faces:
-                crop = img[max(0, y - 20):y + h + 20, max(0, x - 20):x + w + 20]
-                emotion, conf, probs = predict(emotion_model, preprocess_face(cv2.cvtColor(crop, cv2.COLOR_RGB2BGR), model_name))
-                color = COLOR_MAP.get(emotion, (148, 163, 184))
-                cv2.rectangle(annotated, (x, y), (x + w, y + h), color, 2)
-                label = f"{emotion} {conf:.0%}"
-                font = cv2.FONT_HERSHEY_SIMPLEX
-                (tw, th), _ = cv2.getTextSize(label, font, 0.6, 1)
-                cv2.rectangle(annotated, (x, max(0, y - th - 10)), (x + tw + 10, y), (17, 20, 29), -1)
-                cv2.rectangle(annotated, (x, max(0, y - th - 10)), (x + tw + 10, y), color, 1)
-                cv2.putText(annotated, label, (x + 5, max(th + 2, y - 4)), font, 0.6, (240, 245, 255), 1, cv2.LINE_AA)
-
-            st.image(annotated, use_container_width=True)
+            annotated = bgr.copy()
+            for r in results:
+                draw_face_box(annotated, r["box"], r["emotion"], r["conf"])
+            st.image(cv2.cvtColor(annotated, cv2.COLOR_BGR2RGB), use_container_width=True)
 
         with col_res:
-            if len(faces) > 0:
-                results = []
-                for (x, y, w, h) in faces:
-                    crop = img[max(0, y - 20):y + h + 20, max(0, x - 20):x + w + 20]
-                    emotion, conf, probs = predict(emotion_model, preprocess_face(cv2.cvtColor(crop, cv2.COLOR_RGB2BGR), model_name))
-                    results.append({"emotion": emotion, "conf": conf, "probs": probs})
-                top_res = max(results, key=lambda x: x["conf"])
-                render_emotion_stats(top_res["emotion"], top_res["conf"], top_res["probs"])
+            if results:
+                render_top_result(results)
             else:
-                st.markdown(clean_html("""
-                <div class="empty-card">
-                    <div class="empty-title">No Face Detected</div>
-                    <p class="empty-caption">Try adjusting the 'Scale Factor' or 'Min Neighbors' in the sidebar.</p>
-                </div>
-                """), unsafe_allow_html=True)
+                empty_state("🔍", "No face detected", "Try lowering <strong>Detection scale</strong> or <strong>Detection strictness</strong> in Settings.")
     else:
-        st.markdown(clean_html("""
-        <div class="empty-card" style="margin-top: 1rem;">
-            <div class="empty-title">Upload a Portrait or Face Photo</div>
-            <p class="empty-caption">Supports JPG, PNG, and JPEG files.</p>
-        </div>
-        """), unsafe_allow_html=True)
+        empty_state("🖼️", "Add a photo to read", "Drag a JPG or PNG above. Every face in it gets read; the strongest reading is shown.")
+
