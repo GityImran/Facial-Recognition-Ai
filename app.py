@@ -22,6 +22,7 @@ try:
 except ImportError:
     WEBRTC_AVAILABLE = False
 
+# STUN servers for WebRTC peer connections.
 RTC_CONFIGURATION = (
     RTCConfiguration(
         {"iceServers": [{"urls": ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302"]}]}
@@ -43,7 +44,9 @@ st.set_page_config(
 )
 
 # ─── Constants ───
+# Emotion labels in model output order.
 CLASSES = ["Surprise", "Fear", "Disgust", "Happiness", "Sadness", "Anger", "Neutral"]
+# Emoji for each emotion.
 EMOJI_MAP = {
     "Surprise": "😲",
     "Fear": "😨",
@@ -64,11 +67,14 @@ COLOR_MAP = {
     "Neutral": (148, 163, 184)    # #94a3b8
 }
 
+# Folder holding the model weight files.
 MODEL_DIR = os.path.dirname(os.path.abspath(__file__))
+# GPU if available, else CPU.
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # ─── Model Definitions ───
 def build_resnet50(num_classes=7):
+    """Builds a ResNet50 with a custom classifier head."""
     model = models.resnet50(weights=None)
     model.fc = nn.Sequential(
         nn.Linear(model.fc.in_features, 512),
@@ -79,6 +85,7 @@ def build_resnet50(num_classes=7):
     return model
 
 def build_efficientnet(num_classes=7):
+    """Builds an EfficientNet-B3 with a custom classifier head."""
     model = timm.create_model("efficientnet_b3", pretrained=False, num_classes=0)
     return nn.Sequential(
         model,
@@ -90,14 +97,17 @@ def build_efficientnet(num_classes=7):
     )
 
 def build_vit(num_classes=7):
+    """Builds a small Vision Transformer classifier."""
     return timm.create_model("vit_small_patch16_224", pretrained=False, num_classes=num_classes)
 
+# Weight filename for each model.
 MODEL_FILES = {
     "ResNet50": "rafdb_model_resnet50.pth",
     "EfficientNetB3": "rafdb_model_efficientnetb3.pth",
     "ViT-Small": "rafdb_model_vit-small.pth"
 }
 
+# Constructor for each model architecture.
 MODEL_BUILDERS = {
     "ResNet50": lambda: build_resnet50(7),
     "EfficientNetB3": lambda: build_efficientnet(7),
@@ -106,6 +116,7 @@ MODEL_BUILDERS = {
 
 @st.cache_resource
 def load_model(name):
+    """Loads cached model weights by name; None if missing."""
     path = os.path.join(MODEL_DIR, MODEL_FILES[name])
     if not os.path.exists(path):
         return None
@@ -116,8 +127,10 @@ def load_model(name):
 
 @st.cache_resource
 def load_face_detector():
+    """Loads the cached Haar cascade face detector."""
     return cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
 
+# Resize, tensorize, and ImageNet-normalize a face.
 img_transform = transforms.Compose([
     transforms.Resize((224, 224)),
     transforms.ToTensor(),
@@ -125,16 +138,19 @@ img_transform = transforms.Compose([
 ])
 
 def preprocess_face(face_img, model_name=None):
+    """Converts a BGR face crop into a normalized model tensor."""
     pil = Image.fromarray(cv2.cvtColor(face_img, cv2.COLOR_BGR2RGB))
     return img_transform(pil).unsqueeze(0).to(DEVICE)
 
 @torch.no_grad()
 def predict(model, tensor):
+    """Returns top emotion, its confidence, and all class probabilities."""
     probs = F.softmax(model(tensor), dim=1).cpu().numpy()[0]
     idx = int(np.argmax(probs))
     return CLASSES[idx], probs[idx], probs
 
 def to_hex(rgb):
+    """Converts an RGB tuple to a hex colour string."""
     return f"#{rgb[0]:02x}{rgb[1]:02x}{rgb[2]:02x}"
 
 def analyze_faces(bgr_img, faces):
@@ -351,6 +367,7 @@ div[role="radiogroup"] label p { font-size: 13.5px; }
 """), unsafe_allow_html=True)
 
 def empty_state(icon, title, caption, container=None):
+    """Renders a placeholder card with icon, title, and caption."""
     html = (
         f'<div class="empty-card"><div class="empty-icon">{icon}</div>'
         f'<div class="empty-title">{title}</div><p class="empty-caption">{caption}</p></div>'
@@ -386,6 +403,7 @@ with bar_left:
     )
 
 def render_emotion_stats(emotion, conf, probs, container=None, n_faces=1):
+    """Renders the reading panel with spectrum bar and probability legend."""
     dom_hex = to_hex(COLOR_MAP.get(emotion, (148, 163, 184)))
     order = np.argsort(probs)[::-1]
 
@@ -413,6 +431,7 @@ def render_emotion_stats(emotion, conf, probs, container=None, n_faces=1):
     (container or st).markdown(html, unsafe_allow_html=True)
 
 def render_top_result(results, container=None):
+    """Shows the stats for the most confident detected face."""
     top = max(results, key=lambda r: r["conf"])
     render_emotion_stats(top["emotion"], top["conf"], top["probs"], container, n_faces=len(results))
 
@@ -423,6 +442,7 @@ st.markdown(clean_html("""
 </div>
 """), unsafe_allow_html=True)
 
+# Helper text for each input source.
 SOURCE_HINTS = {
     "Live": "Streams from this browser's camera and reads every frame.",
     "Snapshot": "Takes one photo with this browser's camera.",
@@ -451,6 +471,7 @@ if cam_mode != "Upload":
                 st.caption("Press Start to read expressions continuously.")
 
                 def video_frame_callback(frame: av.VideoFrame) -> av.VideoFrame:
+                    """Detects and annotates faces on each live video frame."""
                     img = frame.to_ndarray(format="bgr24")
                     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
                     faces = face_detector.detectMultiScale(gray, face_scale, min_neighbors)
